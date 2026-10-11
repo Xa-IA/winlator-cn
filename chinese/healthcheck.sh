@@ -170,7 +170,7 @@ smoke_run() { # <标签> <期望子串> <超时秒> <env 赋值...> -- <命令..
     env "${envs[@]}" timeout -k 5 "$tmo" "$@" </dev/null >"$log" 2>&1
     env "${envs[@]}" timeout 30 "$SMOKE_WINESERVER" -k </dev/null >/dev/null 2>&1 || true
     out="$(tr -d '\r' <"$log")"; rm -f "$log"
-    if printf '%s' "$out" | grep -q -- "$want"; then
+    if grep -q -- "$want" <<<"$out"; then
         ok "$label"
     else
         fail "冒烟测试失败: $label (期望输出含 '$want'; 实际: $(printf '%s' "$out" | tail -3 | tr '\n' ' ' | cut -c1-240))"
@@ -242,8 +242,8 @@ check_rootfs() { # <rootfs 目录> [期望版本]
             fail "字体缺失或过小: $f"; continue
         fi
         if command -v fc-scan >/dev/null 2>&1; then
-            fc-scan --format '%{family}\n' "$fd/$f" 2>/dev/null | grep -q "Noto Sans CJK SC" \
-                || fail "字体 $f 的 family 不含 'Noto Sans CJK SC'"
+            local fam; fam="$(fc-scan --format '%{family}\n' "$fd/$f" 2>/dev/null)"
+            grep -q "Noto Sans CJK SC" <<<"$fam" || fail "字体 $f 的 family 不含 'Noto Sans CJK SC'"
             python3 - "$(fc-scan --format '%{charset}' "$fd/$f" 2>/dev/null)" "$f" <<'PY' | relay
 import sys
 spans = []
@@ -289,9 +289,9 @@ check_apk() { # <apk> [applicationId]
     local entries; entries="$(unzip -Z1 "$APK")"
     local e before=$FAILS
     for e in AndroidManifest.xml classes.dex assets/rootfs.tzst assets/container_pattern.tzst assets/rootfs_patches.tzst; do
-        printf '%s\n' "$entries" | grep -qx "$e" || fail "APK 缺少 $e"
+        grep -qx "$e" <<<"$entries" || fail "APK 缺少 $e"
     done
-    printf '%s\n' "$entries" | grep -q '^lib/arm64-v8a/.*\.so$' || fail "APK 缺少 lib/arm64-v8a/*.so"
+    grep -q '^lib/arm64-v8a/.*\.so$' <<<"$entries" || fail "APK 缺少 lib/arm64-v8a/*.so"
     [ "$FAILS" -eq "$before" ] && ok "关键条目齐全 (manifest / dex / rootfs / container_pattern / rootfs_patches / arm64 native)"
 
     local aapt2 apksigner
@@ -306,9 +306,9 @@ check_apk() { # <apk> [applicationId]
     fi
     if [ -n "$apksigner" ]; then
         local sig; sig="$("$apksigner" verify --print-certs "$APK" 2>&1)"
-        if printf '%s' "$sig" | grep -q "certificate DN"; then
+        if grep -q "certificate DN" <<<"$sig"; then
             ok "APK 签名校验通过"
-            printf '%s' "$sig" | grep -q "Android Debug" && \
+            grep -q "Android Debug" <<<"$sig" && \
                 warn "APK 使用 debug 证书签名: 每台 CI runner 的 debug 密钥都不同, 不同构建之间无法覆盖安装 (需先卸载), 且不可上架。请配置固定的发布 keystore (secrets: KEYSTORE_B64 等)"
         else
             fail "apksigner 校验失败: $(printf '%s' "$sig" | head -2 | tr '\n' ' ')"
@@ -317,8 +317,21 @@ check_apk() { # <apk> [applicationId]
         warn "未找到 apksigner, 跳过签名检查"
     fi
 
+    # 新建容器所用的 Wine 前缀模板必须带有中文字体注册与替换 (否则中文界面显示为方块)
+    if command -v zstd >/dev/null 2>&1; then
+        local reg
+        reg="$(unzip -p "$APK" assets/container_pattern.tzst 2>/dev/null | zstd -dc 2>/dev/null \
+               | tar -xOf - --wildcards '*.wine/system.reg' 2>/dev/null)"
+        if grep -q '^"SimSun"="Noto Sans CJK SC"' <<<"$reg" \
+           && grep -q '^"Noto Sans CJK SC (TrueType)"="NotoSansCJKsc-Regular.otf"' <<<"$reg"; then
+            ok "container_pattern 前缀注册表含中文字体注册与 SimSun 等替换"
+        else
+            fail "APK 内 container_pattern 的 system.reg 缺少中文字体注册 / 替换 (中文界面会显示为方块)"
+        fi
+    fi
+
     # 已知风险 (需要真机验证, 因此只告警): 上游 box64 的 PT_INTERP 写死 com.winlator 包名下的路径
-    local b64 tmpd; b64="$(printf '%s\n' "$entries" | grep '^assets/box64/box64-.*\.tzst$' | sort -V | tail -1)"
+    local b64 tmpd; b64="$(grep '^assets/box64/box64-.*\.tzst$' <<<"$entries" | sort -V | tail -1)"
     if [ -n "$b64" ] && command -v readelf >/dev/null 2>&1 && command -v zstd >/dev/null 2>&1; then
         tmpd="$(mktemp -d)"
         unzip -p "$APK" "$b64" | zstd -dc | tar -xf - -C "$tmpd" 2>/dev/null

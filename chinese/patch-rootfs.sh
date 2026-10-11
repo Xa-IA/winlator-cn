@@ -179,6 +179,12 @@ CP="$AUX/cp"; mkdir -p "$CP"
 tar -I zstd -xf "$ASSETS/container_pattern.tzst" -C "$CP"
 if [ -f "$CP/.wine/system.reg" ]; then
     python3 "$CHINESE/reg-patch.py" "$CP/.wine/system.reg"
+    # 断言补丁真的生效 (旧版 reg-patch 因段头解析缺陷长期 0 处更新, 且无人察觉)
+    grep -q '^"SimSun"="Noto Sans CJK SC"' "$CP/.wine/system.reg" \
+        && grep -q '^"Noto Sans CJK SC (TrueType)"="NotoSansCJKsc-Regular.otf"' "$CP/.wine/system.reg" \
+        || { echo "!!! container_pattern 注册表中文字体补丁未生效"; exit 1; }
+else
+    echo "!!! container_pattern.tzst 中找不到 .wine/system.reg (上游目录结构变了?)"; exit 1
 fi
 mkdir -p "$CP/.wine/drive_c/windows/Fonts"
 cp "$CHINESE/fonts/NotoSansCJKsc-Regular.otf" "$CHINESE/fonts/NotoSansCJKsc-Bold.otf" "$CP/.wine/drive_c/windows/Fonts/"
