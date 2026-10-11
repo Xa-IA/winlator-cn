@@ -19,6 +19,8 @@
 # ============================================================================
 set -euo pipefail
 
+# 脚本所在目录: 必须在任何 cd 之前解析 ($0 可能是相对路径, 之后再解析会失败)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC="$(realpath "${1:?缺少 wine 源码目录参数}")"
 OUT="$(realpath "${2:?缺少输出目录参数}")"
 
@@ -96,7 +98,7 @@ echo "--- strip 后体积 ---"
 du -sh "$OUT/opt/wine"
 
 echo "==> [7/7] 精简: 删除运行时用不到的开发文件 (include / *.a / man), 缓存与 rootfs 都更小"
-bash "$(dirname "$(realpath "$0")")/../chinese/slim-wine.sh" "$OUT"
+bash "$SCRIPT_DIR/../chinese/slim-wine.sh" "$OUT"
 
 echo "==> 构建产物概览:"
 ls "$OUT/opt/wine/bin/" | head -20

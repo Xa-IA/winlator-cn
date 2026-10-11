@@ -183,6 +183,8 @@ check_smoke() { # <根目录>
     W="$(realpath "$1")/opt/wine"
     section "Wine 冒烟测试 (无头启动)"
     if [ "$(uname -m)" != "x86_64" ]; then warn "宿主非 x86_64, 跳过冒烟测试"; return; fi
+    # 仅用于流水线联调 (例如拿已知有缺陷的旧 Wine 验证打包阶段); 正式构建不得设置
+    if [ -n "${HEALTHCHECK_SKIP_SMOKE:-}" ]; then warn "HEALTHCHECK_SKIP_SMOKE 已设置, 跳过冒烟测试 (仅限联调)"; return; fi
     local tmp; tmp="$(mktemp -d)"
     local base=(WINEPREFIX="$tmp/pfx" WINEDEBUG=-all TMPDIR="$tmp"
                 "WINEDLLOVERRIDES=winex11.drv=d;winealsa.drv=d;winepulse.drv=d;winebus.sys=d;mscoree,mshtml=d")

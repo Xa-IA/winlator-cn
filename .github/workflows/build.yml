@@ -89,10 +89,12 @@ jobs:
           path: wine-staging
           key: wine-${{ env.WINE_TAG }}-r2-${{ hashFiles('wine/winlator-custom-wine11.patch', 'wine/build-wine.sh', 'chinese/slim-wine.sh') }}
 
-      # ccache: 补丁/脚本改动后增量重编 (只重编变化的文件), 通常几分钟而不是 ~1 小时
-      - name: ccache 缓存 (增量重编)
+      # ccache: 补丁/脚本改动后增量重编 (只重编变化的文件), 通常几分钟而不是 ~1 小时。
+      # restore / save 拆开, 下面的"保存 ccache"用 always(): 即使收尾步骤失败, 已完成的编译成果也不会丢
+      - name: 恢复 ccache (增量重编)
+        id: ccache
         if: steps.wine-cache.outputs.cache-hit != 'true'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .ccache
           key: ccache-${{ env.WINE_TAG }}-${{ hashFiles('wine/winlator-custom-wine11.patch', 'wine/build-wine.sh') }}
@@ -127,7 +129,16 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
           CCACHE_MAXSIZE: 1500M
         run: |
+          mkdir -p "$CCACHE_DIR"
           bash wine/build-wine.sh wine-src "$GITHUB_WORKSPACE/wine-staging"
+
+      - name: 保存 ccache (失败也保存)
+        if: always() && steps.wine-cache.outputs.cache-hit != 'true' && steps.ccache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .ccache
+          key: ccache-${{ env.WINE_TAG }}-${{ hashFiles('wine/winlator-custom-wine11.patch', 'wine/build-wine.sh') }}
 
       - name: 清理缓存目录中的符号链接等
         if: steps.wine-cache.outputs.cache-hit != 'true'
