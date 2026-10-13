@@ -72,6 +72,24 @@
 
 > 说明:上述二进制由上游作者构建,本仓库未对其做逆向审计;仅保证来源可溯源(上游提交 + 哈希)并在 CI 中校验哈希清单(见 `ci/assets.sha256`)。
 
+## 已知风险与修复思路 (本次未改动, 需真机验证后再决定)
+
+1. **box64 的 ELF 解释器路径写死为上游包名** (CI 每次构建都会在 `healthcheck.sh apk` 里告警): 上游 `box64` 的
+   `PT_INTERP` / `RUNPATH` 是 `/data/data/com.winlator/files/rootfs/lib/...`, 而本应用包名是 `com.winlator.cn`,
+   应用又是直接 `exec` box64 (无显式加载器)。内核解析 `PT_INTERP` 时会找不到解释器, 导致无法启动。rootfs 内的
+   `fonts.conf`、`ld.so.cache`、`alsa.conf` 以及许多库里也写死了同样的前缀。可选方案:
+   (a) CI 里用 patchelf 改写 aarch64 可执行文件的解释器与 rpath, 并改写 rootfs 内的文本配置;
+   (b) 重新构建针对 `com.winlator.cn` 前缀的 rootfs / box64;
+   (c) 改用与原包名等长的 applicationId, 便于直接二进制替换。
+   注意: 直接改成 `ld-linux-aarch64.so.1 box64` 的显式加载器方式会使 `/proc/self/exe` 指向加载器, box64
+   依赖它定位自身, 未经验证不要采用。
+2. **APK 用 debug 证书签名**: 每台 CI runner 的 debug 密钥不同, 不同构建之间无法覆盖安装, 也不可上架。
+   请在仓库 secrets 中配置固定 keystore (`KEYSTORE_B64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`),
+   工作流已支持。
+3. **`WINEESYNC` 无实现**: 应用仍会设置它, 但补丁里没有 esync 实现 (Wine 上游也没有), 实际退回 wineserver 同步,
+   可能影响部分游戏性能, 不影响正确性。
+4. Wine 上游已有 11.16 ~ 11.19, 本次保持 11.15 以控制变更面。
+
 ## 如何再次同步
 
 1. `git clone --filter=blob:none --no-checkout https://github.com/brunodev85/winlator-app.git /tmp/up`
