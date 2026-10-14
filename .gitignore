@@ -14,3 +14,4 @@ local.properties
 # 临时
 *.log
 *.tzst.new
+__pycache__/

@@ -202,6 +202,18 @@ jobs:
           ls -lh android/app/src/main/assets/*.tzst
 
       # ---------------------------------------------------------------
+      # 阶段 2.5: 改写二进制资产中的包名前缀 (UPSTREAM.md 已知风险 #1)
+      # 上游 box64 的 PT_INTERP / vulkan icd.json / rootfs 文本配置写死了
+      # /data/data/com.winlator 前缀, 与包名 com.winlator.cn 不符,
+      # 直接 exec 必败。不改则容器无法启动。
+      # ---------------------------------------------------------------
+      - name: 改写资产中的包名前缀 (com.winlator -> com.winlator.cn)
+        run: |
+          set -euxo pipefail
+          bash chinese/fix-prefix-paths.sh \
+              "$GITHUB_WORKSPACE/android/app/src/main/assets" com.winlator.cn
+
+      # ---------------------------------------------------------------
       # 阶段 3: Android APK
       # ---------------------------------------------------------------
       - name: 安装 JDK 17

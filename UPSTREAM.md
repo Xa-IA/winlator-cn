@@ -83,6 +83,12 @@
    (c) 改用与原包名等长的 applicationId, 便于直接二进制替换。
    注意: 直接改成 `ld-linux-aarch64.so.1 box64` 的显式加载器方式会使 `/proc/self/exe` 指向加载器, box64
    依赖它定位自身, 未经验证不要采用。
+   > **已按方案 (a) 修复 (2026-10-14)**: 新增 `chinese/fix-prefix-paths.sh`, 在 CI 打包阶段对所有 tzst 资产
+   > 做 patchelf (PT_INTERP/RPATH) + 文本配置 sed 改写, 并删除含旧前缀的 `etc/ld.so.cache`; 脚本收尾会断言
+   > box64 解释器已等于本应用路径, 否则构建失败。`healthcheck.sh apk` 的该项告警应转为通过。
+   > 仍属已知限制: 部分 ELF 的 **rodata 内嵌字符串** (gladio/virgl `libGL.so`、vortek `libvulkan_vortek.so`、
+   > rootfs_patches 的 alsa aserver 模块等) 新旧前缀长度不同无法用 patchelf/sed 修复; 这些库均由应用按
+   > 显式路径加载, 内嵌路径仅为兜底, 保留观察。需真机验证。
 2. **APK 用 debug 证书签名**: 每台 CI runner 的 debug 密钥不同, 不同构建之间无法覆盖安装, 也不可上架。
    请在仓库 secrets 中配置固定 keystore (`KEYSTORE_B64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`),
    工作流已支持。
