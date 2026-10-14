@@ -188,6 +188,26 @@ jobs:
           export WINE_VERSION="${WINE_TAG#wine-}"
           bash chinese/healthcheck.sh wine wine-staging
 
+      # 诊断: 容器真机卡在 "正在启动…" (wine 报 nodrv_CreateWindow,
+      # 即图形驱动 winex11.drv 没加载上)。这里把 Wine 构建产物里与图形
+      # 驱动相关的文件 dump 出来, 判断是 Wine 构建缺件还是运行时问题。
+      - name: 诊断: Wine 图形驱动产物
+        run: |
+          set -uo pipefail
+          W="wine-staging/opt/wine/lib/wine"
+          echo "=== x86_64-windows (PE 驱动) 中含 x11 的条目 ==="
+          ls -la "$W/x86_64-windows/" 2>/dev/null | grep -ai "x11" || echo "  [!!] 无 winex11.drv"
+          echo "=== x86_64-unix (unix 侧) 中含 x11 的条目 ==="
+          ls -la "$W/x86_64-unix/" 2>/dev/null | grep -ai "x11" || echo "  [!!] 无 winex11.drv.so"
+          echo "=== win32u.so 是否含 __wine_unix_call_funcs ==="
+          grep -ac "__wine_unix_call_funcs" "$W/x86_64-unix/win32u.so" 2>/dev/null || echo "  [!!] win32u.so 缺少 __wine_unix_call_funcs"
+          echo "=== win32u.so 动态符号 (前 20 个 wine 相关) ==="
+          (nm -D "$W/x86_64-unix/win32u.so" 2>/dev/null || strings -a "$W/x86_64-unix/win32u.so") \
+              | grep -a "wine" | head -20
+          echo "=== winex11.drv 依赖的 X11 库 (rootfs 内是否存在) ==="
+          tar -I zstd -tvf android/app/src/main/assets/rootfs.tzst 2>/dev/null \
+              | grep -a "libX11.so.6\|libxcb.so.1" | head -5 || echo "  [!!] rootfs 内未找到 libX11/libxcb"
+
       # ---------------------------------------------------------------
       # 阶段 2: rootfs 注入 Wine 11 + 中文支持 (内含: 精简 / 打包前健康检查 / 冒烟测试)
       # ---------------------------------------------------------------
