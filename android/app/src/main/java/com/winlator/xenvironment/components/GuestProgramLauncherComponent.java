@@ -165,11 +165,11 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         envVars.put("BOX64_UNITYPLAYER", "0");
         envVars.put("BOX64_DYNACACHE", "0");
 
-        // 诊断版: 强制开启 box64 详细日志 (加载步骤/段错误/DLSYM 错误 -> stderr -> logcat)
+        // 诊断版: 打开段错误/DLSYM 错误的报告 (量小, 不影响 logcat 配额)。
+        // 注意: 不要在这里强制 BOX64_LOG=1 —— box64 每条加载/重编译都打一行,
+        // 几秒内就能把 logcat 的每进程 300 条配额打爆, 真正的 wine 报错反而
+        // 被 "LOGS OVER PROC QUOTA ... DROPPED" 冲掉 (上次排查就栽在这里)。
         if (com.winlator.MainActivity.DEBUG_MODE) {
-            envVars.put("BOX64_NOBANNER", "0");
-            envVars.put("BOX64_LOG", "1");
-            envVars.put("BOX64_DYNAREC_MISSING", "1");
             envVars.put("BOX64_SHOWSEGV", "1");
             envVars.put("BOX64_DLSYM_ERROR", "1");
         }

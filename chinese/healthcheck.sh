@@ -282,7 +282,7 @@ find_sdk_tool() { # <工具名>
 }
 
 check_apk() { # <apk> [applicationId]
-    local APK="$1" APPID="${2:-com.winlator.cn}" tmp
+    local APK="$1" APPID="${2:-com.winla.cn}" tmp
     section "APK 检查 ($APK)"
     [ -s "$APK" ] || { fail "APK 不存在或为空: $APK"; return; }
 

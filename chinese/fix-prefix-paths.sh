@@ -19,16 +19,26 @@
 #      生成, 在本包名下全部失效; 删除后加载器回退到 LD_LIBRARY_PATH
 #      (应用启动时已设置指向本应用 rootfs lib 目录) + 默认目录,
 #      与上游 rootfs 在 Android 上的实际运行方式一致
-#   4. ELF rodata 中内嵌的旧前缀字符串 (gladio/virgl libGL 等) 无法用
-#      patchelf/sed 修复 (新旧前缀长度不同), 这些 .so 由应用按显式路径加载,
-#      内嵌路径只是兜底, 保留为已知限制 (见 UPSTREAM.md)
+#   4. ELF rodata 中内嵌的旧前缀字符串 (libxcb 的 X 套接字目录、pulse 的 shm
+#      目录、gstreamer/locale/vulkan 路径等) 既不在 PT_INTERP/RPATH 里、
+#      也不是文本文件, patchelf 和 sed 都管不到 —— 由 patch-binary-prefix.py
+#      做等长就地字节替换。
+#
+# 为什么 applicationId 必须与官方等长 (12 字符)
+# ----------------------------------------------
+#   内嵌字符串后面还跟子路径, 例如 libxcb.so.1 里是
+#     /data/data/com.winlator/files/rootfs/tmp/.X11-unix/X
+#   旧前缀 /data/data/com.winlator 长 23 字节。新前缀更短就要补 NUL, 会把
+#   /tmp/.X11-unix/X 截成孤儿字节; 更长则无处安放。只有等长才能"只换包名、
+#   其余不变"。故本 fork 用 com.winla.cn (12 字符, 与 com.winlator 等长)。
 #
 # 用法: fix-prefix-paths.sh <android-assets目录> [appid]
 # ============================================================================
 set -euo pipefail
 
 ASSETS="$(realpath "${1:?缺少 assets 目录参数}")"
-APPID="${2:-com.winlator.cn}"
+APPID="${2:-com.winla.cn}"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OLD_PREFIX="/data/data/com.winlator"
 NEW_PREFIX="/data/data/${APPID}"
 ZSTD_LEVEL="${ZSTD_LEVEL:-19}"
@@ -39,6 +49,18 @@ $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recomme
     patchelf zstd binutils >/dev/null 2>&1 || true
 command -v patchelf >/dev/null || { echo "!!! 缺少 patchelf"; exit 1; }
 command -v zstd >/dev/null || { echo "!!! 缺少 zstd"; exit 1; }
+command -v python3 >/dev/null || { echo "!!! 缺少 python3"; exit 1; }
+
+# 新旧前缀必须等长: 内嵌路径后面还跟子路径, 不等长就无法就地替换
+if [ "${#OLD_PREFIX}" -ne "${#NEW_PREFIX}" ]; then
+    echo "!!! 新旧前缀长度不等 (${#OLD_PREFIX} != ${#NEW_PREFIX}):"
+    echo "    旧: $OLD_PREFIX"
+    echo "    新: $NEW_PREFIX"
+    echo "    内嵌的旧前缀后面还跟有子路径, 就地替换会截断它们。"
+    echo "    applicationId 必须与官方 com.winlator 等长 (12 字符)。"
+    exit 1
+fi
+echo "==> 前缀替换: $OLD_PREFIX -> $NEW_PREFIX (等长 ${#OLD_PREFIX} 字节)"
 
 TOTAL=0
 
@@ -116,6 +138,15 @@ fix_dir() {
     done)
 }
 
+# ---- 二进制就地替换: rodata / .dynstr / 文本配置里的旧前缀 ----
+# 必须在 fix_dir 之前跑: 本步等长替换, 不会截断子路径; 之后 patchelf/sed
+# 只是兜底 (正常情况下已无可改内容)。
+fix_bin() {
+    local dir="$1" n
+    n="$(python3 "$SELF_DIR/patch-binary-prefix.py" "$OLD_PREFIX" "$NEW_PREFIX" "$dir")"
+    TOTAL=$((TOTAL + ${n:-0}))
+}
+
 # ---- rootfs 专属: 清理含旧前缀的 stale ld.so.cache ----
 fix_ldconfig_cache() {
     local dir="$1"
@@ -134,10 +165,13 @@ while IFS= read -r -d '' tz; do
     chmod -R u+w "$tmp"   # 防止打包内只读权限导致 sed -i / patchelf 失败
     before="$TOTAL"
     echo "--> ${tz#"$ASSETS"/}"
+    fix_bin "$tmp"
     fix_dir "$tmp"
     if [ "$(basename "$tz")" = "rootfs.tzst" ]; then
         fix_ldconfig_cache "$tmp"
     fi
+    # 打包前断言: 该资产里不许再有任何旧前缀 (含 rodata 内嵌)
+    python3 "$SELF_DIR/patch-binary-prefix.py" --check "$OLD_PREFIX" "$tmp"
     if [ "$TOTAL" -gt "$before" ]; then
         ( cd "$tmp" && tar --numeric-owner --owner=0 --group=0 --sort=name \
             -cf "$tz.new" --use-compress-program="zstd -q -$ZSTD_LEVEL -T0" . )

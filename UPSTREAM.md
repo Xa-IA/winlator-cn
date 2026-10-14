@@ -86,9 +86,25 @@
    > **已按方案 (a) 修复 (2026-10-14)**: 新增 `chinese/fix-prefix-paths.sh`, 在 CI 打包阶段对所有 tzst 资产
    > 做 patchelf (PT_INTERP/RPATH) + 文本配置 sed 改写, 并删除含旧前缀的 `etc/ld.so.cache`; 脚本收尾会断言
    > box64 解释器已等于本应用路径, 否则构建失败。`healthcheck.sh apk` 的该项告警应转为通过。
-   > 仍属已知限制: 部分 ELF 的 **rodata 内嵌字符串** (gladio/virgl `libGL.so`、vortek `libvulkan_vortek.so`、
-   > rootfs_patches 的 alsa aserver 模块等) 新旧前缀长度不同无法用 patchelf/sed 修复; 这些库均由应用按
-   > 显式路径加载, 内嵌路径仅为兜底, 保留观察。需真机验证。
+   > **已按方案 (a)+(c) 完整修复 (2026-10-14, 第二次)**: 方案 (a) 只解决了 PT_INTERP/RPATH/文本配置,
+   > 真机仍卡在"正在启动…"。真机日志定位到真正的致命项在 **rodata 内嵌字符串**:
+   > `rootfs/usr/lib/libxcb.so.1` 里硬编码了
+   > `/data/data/com.winlator/files/rootfs/tmp/.X11-unix/X`,
+   > 而应用的 X Server 把套接字建在 `<本应用>/files/rootfs/tmp/.X11-unix/X0`
+   > (`UnixSocketConfig.XSERVER_PATH`), 两者对不上 ->
+   > `XOpenDisplay` 失败 -> `winex11.so` 初始化失败 -> Wine 退回 `nodrv` ->
+   > `err:winediag:nodrv_CreateWindow L"The explorer process failed to start."` ->
+   > explorer 建不出窗口, 而"正在启动…"对话框只在 `xServer.onMapWindow` 回调里关闭, 于是永远转圈。
+   > (Wine 侧表现: `wineboot -u` 生成前缀是成功的, 所以问题只出在需要图形的 explorer。)
+   >
+   > 修复: 新增 `chinese/patch-binary-prefix.py`, 对所有资产做**等长就地字节替换**。
+   > 为此 applicationId 由 `com.winlator.cn` (15) 改为 **`com.winla.cn` (12)** —— 与官方
+   > `com.winlator` 等长, `/data/data/com.winlator` 与 `/data/data/com.winla.cn` 都是 23 字节,
+   > 替换后长度不变, 字符串后面的子路径 (`/tmp/.X11-unix/X` 等) 一个字节都不会被截断。
+   > 打包前脚本会断言该资产内零残留旧前缀, 否则构建失败。
+   >
+   > **结论: applicationId 必须与官方等长 (12 字符)。** 若日后改名, 必须保持 12 字符,
+   > 否则 `fix-prefix-paths.sh` 会在开头直接报错退出。
 2. **APK 用 debug 证书签名**: 每台 CI runner 的 debug 密钥不同, 不同构建之间无法覆盖安装, 也不可上架。
    请在仓库 secrets 中配置固定 keystore (`KEYSTORE_B64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`),
    工作流已支持。

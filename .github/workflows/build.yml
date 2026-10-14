@@ -224,14 +224,14 @@ jobs:
       # ---------------------------------------------------------------
       # 阶段 2.5: 改写二进制资产中的包名前缀 (UPSTREAM.md 已知风险 #1)
       # 上游 box64 的 PT_INTERP / vulkan icd.json / rootfs 文本配置写死了
-      # /data/data/com.winlator 前缀, 与包名 com.winlator.cn 不符,
+      # /data/data/com.winlator 前缀, 与包名 com.winla.cn 不符,
       # 直接 exec 必败。不改则容器无法启动。
       # ---------------------------------------------------------------
-      - name: 改写资产中的包名前缀 (com.winlator -> com.winlator.cn)
+      - name: 改写资产中的包名前缀 (com.winlator -> com.winla.cn)
         run: |
           set -euxo pipefail
           bash chinese/fix-prefix-paths.sh \
-              "$GITHUB_WORKSPACE/android/app/src/main/assets" com.winlator.cn
+              "$GITHUB_WORKSPACE/android/app/src/main/assets" com.winla.cn
 
       # ---------------------------------------------------------------
       # 阶段 3: Android APK
@@ -315,7 +315,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: APK 健康检查 (完整性 / 包名 / 签名 / 资产)
-        run: bash chinese/healthcheck.sh apk "dist/$APK_NAME" com.winlator.cn
+        run: bash chinese/healthcheck.sh apk "dist/$APK_NAME" com.winla.cn
 
       - name: 构建摘要
         run: |
