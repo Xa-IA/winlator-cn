@@ -9,9 +9,11 @@ import androidx.annotation.NonNull;
 import com.winlator.MainActivity;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -80,6 +82,17 @@ public abstract class ProcessHelper {
         for (String name : envVars) environment.put(name, envVars.get(name));
 
         java.lang.Process process = processBuilder.start();
+
+        // 诊断: 打印真实命令行 —— 桌面名是 shell 还是 nogui 决定有没有任务栏
+        // (nogui 时 show_systray=FALSE 且 WM_ERASEBKGND 不 PaintDesktop,
+        //  可同时解释"无开始菜单"与"闪烁")
+        if (MainActivity.DEBUG_MODE) {
+            System.out.println("[DIAG] exec: " + command);
+            System.out.println("[DIAG] cwd:  " + workingDir);
+            if (envVars.has("WINEDEBUG")) System.out.println("[DIAG] WINEDEBUG=" + envVars.get("WINEDEBUG"));
+            if (envVars.has("DISPLAY")) System.out.println("[DIAG] DISPLAY=" + envVars.get("DISPLAY"));
+        }
+
         Field pidField = process.getClass().getDeclaredField("pid");
         pidField.setAccessible(true);
         pid = pidField.getInt(process);
@@ -101,6 +114,32 @@ public abstract class ProcessHelper {
     return pid;
     }
 
+    // ---- 诊断: wine/box64 输出落盘 ----
+    // logcat 对每个进程有 300 行/周期 的配额。桌面每次重绘都会刷
+    //   fixme:msg:pack_message msg 14 (WM_ERASEBKGND) not supported yet
+    // 实测 20 秒 7206 条, 把真正的报错 (systray/startmenu/x11drv) 全部挤掉
+    // (日志里可见 "LOGS OVER PROC QUOTA(300) ... DROPPED")。
+    // 因此全量写文件 (无配额限制), logcat 只保留非刷屏行。
+    private static final File WINE_LOG_FILE = new File("/sdcard/Documents/Winlator/wine.log");
+    private static BufferedWriter wineLogWriter;
+    private static int wineLogLines = 0;
+
+    private static synchronized void wineLog(String line) {
+        try {
+            if (wineLogWriter == null) {
+                File dir = WINE_LOG_FILE.getParentFile();
+                if (dir != null) dir.mkdirs();
+                wineLogWriter = new BufferedWriter(new FileWriter(WINE_LOG_FILE, true));
+                wineLogWriter.write("===== " + new java.util.Date() + " =====");
+                wineLogWriter.newLine();
+            }
+            wineLogWriter.write(line);
+            wineLogWriter.newLine();
+            if (++wineLogLines % 20 == 0) wineLogWriter.flush();
+        }
+        catch (IOException e) {}
+    }
+
     private static void createDebugThread(final InputStream inputStream) {
         Executors.newSingleThreadExecutor().execute(() -> {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
@@ -110,7 +149,10 @@ public abstract class ProcessHelper {
                         if (!debugCallbacks.isEmpty()) {
                             for (Callback<String> callback : debugCallbacks) callback.call(line);
                         }
-                        else if (MainActivity.DEBUG_MODE) System.out.println(line);
+                        else if (MainActivity.DEBUG_MODE) {
+                            wineLog(line);
+                            if (!line.contains("pack_message")) System.out.println(line);
+                        }
                     }
                 }
             }
