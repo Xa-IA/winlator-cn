@@ -42,11 +42,34 @@ command -v zstd >/dev/null || { echo "!!! 缺少 zstd"; exit 1; }
 
 TOTAL=0
 
+# ---------------------------------------------------------------------------
+# 前缀匹配/替换的统一工具
+#
+# 子串陷阱: NEW_PREFIX (/data/data/com.winlator.cn) 本身以 OLD_PREFIX
+# (/data/data/com.winlator) 开头。任何 "包含 OLD_PREFIX" 的无边界判断都会
+# 把已经修好的路径再改一次 -> /data/data/com.winlator.cn.cn/...
+# 因此一律要求旧前缀后面紧跟 "/" 或处于字符串结尾。
+# ---------------------------------------------------------------------------
+has_old_prefix() {
+    local s="$1"
+    [[ "$s" == *"$OLD_PREFIX" || "$s" == *"$OLD_PREFIX/"* ]]
+}
+
+rewrite_prefix() {
+    local s="$1" out
+    out="${s//"$OLD_PREFIX/"/"$NEW_PREFIX"/}"          # 旧前缀后跟 "/"
+    [[ "$s" == *"$OLD_PREFIX" ]] && out="${out%"$OLD_PREFIX"}$NEW_PREFIX"  # 旧前缀在结尾
+    printf '%s' "$out"
+}
+
 # ---- 单个 ELF: 解释器 / rpath 旧前缀改写 (只动含旧前缀的) ----
 fix_elf() {
     local elf="$1" interp rpath newval
     interp="$(patchelf --print-interpreter "$elf" 2>/dev/null || true)"
-    if [ -n "$interp" ] && [[ "$interp" == "$OLD_PREFIX"* ]]; then
+    # 边界检查: NEW_PREFIX (/data/data/com.winlator.cn) 本身以 OLD_PREFIX
+    # (/data/data/com.winlator) 开头, 无边界匹配会把已修复的路径再改一次
+    # -> /data/data/com.winlator.cn.cn/... 必须要求旧前缀后是 "/" 或结尾
+    if [ -n "$interp" ] && [[ "$interp" == "$OLD_PREFIX" || "$interp" == "$OLD_PREFIX/"* ]]; then
         newval="$NEW_PREFIX${interp#"$OLD_PREFIX"}"
         patchelf --set-interpreter "$newval" "$elf"
         echo "    INTERP ${elf#*work/}: $interp"
@@ -54,8 +77,8 @@ fix_elf() {
         TOTAL=$((TOTAL+1))
     fi
     rpath="$(patchelf --print-rpath "$elf" 2>/dev/null || true)"
-    if [ -n "$rpath" ] && [[ "$rpath" == *"$OLD_PREFIX"* ]]; then
-        newval="${rpath//"$OLD_PREFIX"/"$NEW_PREFIX"}"
+    if [ -n "$rpath" ] && has_old_prefix "$rpath"; then
+        newval="$(rewrite_prefix "$rpath")"
         patchelf --set-rpath "$newval" "$elf"
         echo "    RPATH  ${elf#*work/} -> $newval"
         TOTAL=$((TOTAL+1))
@@ -70,8 +93,8 @@ fix_dir() {
     while IFS= read -r f; do
         local target newtarget
         target="$(readlink "$f")"
-        if [[ "$target" == *"$OLD_PREFIX"* ]]; then
-            newtarget="${target//"$OLD_PREFIX"/"$NEW_PREFIX"}"
+        if has_old_prefix "$target"; then
+            newtarget="$(rewrite_prefix "$target")"
             ln -sfn "$newtarget" "$f"
             echo "    LINK   ${f#"$dir"/} -> $newtarget"
             TOTAL=$((TOTAL+1))
@@ -147,10 +170,13 @@ echo "    box64 解释器 = $got_interp ✓"
 # ---- 最终断言2: 任何资产中不得再有指向旧前缀的符号链接 ----
 # (v1.0.0 的 container_pattern 里 .wine/dosdevices/z: 是指向旧包名的绝对链接,
 #  sed/patchelf 都管不到符号链接, 必须显式重建, 否则 wine 的 Z: 盘断裂)
+# tar -tvf 的符号链接行形如:  lrwxrwxrwx 0/0 0 ... 名 -> 目标
+# 同样要排除 com.winlator.cn: 旧前缀后必须是 "/" 或行尾
+OLD_LINK_RE="${OLD_PREFIX}(/|$)"
 while IFS= read -r -d '' tz; do
-    if tar -I zstd -tvf "$tz" 2>/dev/null | grep '^l' | grep -q -- "$OLD_PREFIX"; then
+    if tar -I zstd -tvf "$tz" 2>/dev/null | grep '^l' | grep -qE -- "$OLD_LINK_RE"; then
         echo "!!! ${tz#"$ASSETS"/} 仍含指向旧前缀的符号链接:"
-        tar -I zstd -tvf "$tz" 2>/dev/null | grep '^l' | grep -- "$OLD_PREFIX" | head -3
+        tar -I zstd -tvf "$tz" 2>/dev/null | grep '^l' | grep -E -- "$OLD_LINK_RE" | head -3
         exit 1
     fi
 done < <(find "$ASSETS" -name '*.tzst' -print0)
