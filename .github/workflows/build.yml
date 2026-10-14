@@ -191,7 +191,7 @@ jobs:
       # 诊断: 容器真机卡在 "正在启动…" (wine 报 nodrv_CreateWindow,
       # 即图形驱动 winex11.drv 没加载上)。这里把 Wine 构建产物里与图形
       # 驱动相关的文件 dump 出来, 判断是 Wine 构建缺件还是运行时问题。
-      - name: 诊断: Wine 图形驱动产物
+      - name: "诊断: Wine 图形驱动产物"
         run: |
           set -uo pipefail
           W="wine-staging/opt/wine/lib/wine"
