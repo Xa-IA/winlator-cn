@@ -102,17 +102,37 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
 
         if (this.envVars != null) envVars.putAll(this.envVars);
 
+        // 诊断版: 输出 wine 的错误级调试信息 (err+all)
+        if (com.winlator.MainActivity.DEBUG_MODE) envVars.put("WINEDEBUG", "err+all");
+
         File shmDir = new File(rootDir, "/tmp/shm");
         if (!shmDir.isDirectory()) shmDir.mkdirs();
 
         String command = rootDir+"/usr/local/bin/box64 "+guestExecutable;
 
-        return ProcessHelper.exec(command, envVars, rootDir, (status) -> {
+        if (com.winlator.MainActivity.DEBUG_MODE) {
+            System.out.println("[DIAG] GuestProgramLauncher: exec 命令: "+command);
+            System.out.println("[DIAG] GuestProgramLauncher: box64 路径存在="+new File(rootDir, "/usr/local/bin/box64").exists()+
+                " 可执行="+new File(rootDir, "/usr/local/bin/box64").canExecute());
+            System.out.println("[DIAG] GuestProgramLauncher: LD_LIBRARY_PATH="+envVars.get("LD_LIBRARY_PATH"));
+            System.out.println("[DIAG] GuestProgramLauncher: BOX64_LD_LIBRARY_PATH="+envVars.get("BOX64_LD_LIBRARY_PATH"));
+            System.out.println("[DIAG] GuestProgramLauncher: PATH="+envVars.get("PATH"));
+        }
+
+        final int execResult = ProcessHelper.exec(command, envVars, rootDir, (status) -> {
             synchronized (lock) {
                 pid = -1;
             }
+            if (com.winlator.MainActivity.DEBUG_MODE)
+                System.out.println("[DIAG] GuestProgramLauncher: 子进程退出, status="+status);
             if (terminationCallback != null) terminationCallback.call(status);
         });
+
+        if (execResult == -1) {
+            System.err.println("[DIAG] GuestProgramLauncher: exec 返回 -1, 进程启动失败 (文件不存在或无执行权限?)");
+            if (terminationCallback != null) terminationCallback.call(-1);
+        }
+        return execResult;
     }
 
     private void extractBox64File() {
@@ -144,6 +164,15 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         envVars.put("BOX64_DYNAREC", "1");
         envVars.put("BOX64_UNITYPLAYER", "0");
         envVars.put("BOX64_DYNACACHE", "0");
+
+        // 诊断版: 强制开启 box64 详细日志 (加载步骤/段错误/DLSYM 错误 -> stderr -> logcat)
+        if (com.winlator.MainActivity.DEBUG_MODE) {
+            envVars.put("BOX64_NOBANNER", "0");
+            envVars.put("BOX64_LOG", "1");
+            envVars.put("BOX64_DYNAREC_MISSING", "1");
+            envVars.put("BOX64_SHOWSEGV", "1");
+            envVars.put("BOX64_DLSYM_ERROR", "1");
+        }
 
         if (box64Logs >= 1) {
             envVars.put("BOX64_LOG", "1");

@@ -12,7 +12,8 @@
 #
 # 修复 (对应 UPSTREAM.md 方案 a):
 #   1. 所有 ELF 的 PT_INTERP / RPATH 中旧前缀 -> 新前缀 (patchelf, 与长度无关)
-#   2. 所有文本配置 (fonts.conf / alsa.conf / vulkan icd.json / X11 Compose 等)
+#   2. 所有符号链接目标中旧前缀 -> 新前缀 (ln -sfn 重建, sed/patchelf 均不处理链接)
+#   3. 所有文本配置 (fonts.conf / alsa.conf / vulkan icd.json / X11 Compose 等)
 #      中旧前缀 -> 新前缀 (sed)
 #   3. rootfs 的 etc/ld.so.cache 若含旧前缀则删除: 该缓存按官方包名路径
 #      生成, 在本包名下全部失效; 删除后加载器回退到 LD_LIBRARY_PATH
@@ -64,6 +65,18 @@ fix_elf() {
 # ---- 目录级扫描: 文本 sed + ELF patchelf ----
 fix_dir() {
     local dir="$1"
+    # 符号链接: 目标含旧前缀时重建为新前缀
+    # (sed 不能动链接, 会把链接替换成实体文件; 必须用 ln -sfn 重建)
+    while IFS= read -r f; do
+        local target newtarget
+        target="$(readlink "$f")"
+        if [[ "$target" == *"$OLD_PREFIX"* ]]; then
+            newtarget="${target//"$OLD_PREFIX"/"$NEW_PREFIX"}"
+            ln -sfn "$newtarget" "$f"
+            echo "    LINK   ${f#"$dir"/} -> $newtarget"
+            TOTAL=$((TOTAL+1))
+        fi
+    done < <(find "$dir" -type l 2>/dev/null || true)
     # 文本文件: grep 先过滤出含旧前缀的文本文件, sed 逐文件替换
     # (--binary-files=without-match 跳过 ld.so.cache 等二进制)
     while IFS= read -r f; do
@@ -130,4 +143,16 @@ fi
 
 echo "==> 完成: $count_tzst 个资产重打包, 共 $TOTAL 处改写"
 echo "    box64 解释器 = $got_interp ✓"
+
+# ---- 最终断言2: 任何资产中不得再有指向旧前缀的符号链接 ----
+# (v1.0.0 的 container_pattern 里 .wine/dosdevices/z: 是指向旧包名的绝对链接,
+#  sed/patchelf 都管不到符号链接, 必须显式重建, 否则 wine 的 Z: 盘断裂)
+while IFS= read -r -d '' tz; do
+    if tar -I zstd -tvf "$tz" 2>/dev/null | grep '^l' | grep -q -- "$OLD_PREFIX"; then
+        echo "!!! ${tz#"$ASSETS"/} 仍含指向旧前缀的符号链接:"
+        tar -I zstd -tvf "$tz" 2>/dev/null | grep '^l' | grep -- "$OLD_PREFIX" | head -3
+        exit 1
+    fi
+done < <(find "$ASSETS" -name '*.tzst' -print0)
+echo "    符号链接检查 ✓"
 echo "FIX_PREFIX_PATHS_OK"

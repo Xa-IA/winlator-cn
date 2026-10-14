@@ -70,27 +70,35 @@ public abstract class ProcessHelper {
     public static int exec(String command, EnvVars envVars, File workingDir, Callback<Integer> terminationCallback) {
         int pid = -1;
         try {
-            ProcessBuilder processBuilder = (new ProcessBuilder(splitCommand(command))).directory(workingDir);
-            if (debugCallbacks.isEmpty()) processBuilder.redirectOutput(new File("/dev/null")).redirectErrorStream(true);
+        ProcessBuilder processBuilder = (new ProcessBuilder(splitCommand(command))).directory(workingDir);
+        // 诊断版: DEBUG_MODE 下不再把子进程输出丢进 /dev/null,
+        // 让 box64/wine 的 stdout/stderr 直通 logcat (tag System.out / System.err)
+        if (debugCallbacks.isEmpty() && !MainActivity.DEBUG_MODE)
+            processBuilder.redirectOutput(new File("/dev/null")).redirectErrorStream(true);
 
-            Map<String, String> environment = processBuilder.environment();
-            for (String name : envVars) environment.put(name, envVars.get(name));
+        Map<String, String> environment = processBuilder.environment();
+        for (String name : envVars) environment.put(name, envVars.get(name));
 
-            java.lang.Process process = processBuilder.start();
-            Field pidField = process.getClass().getDeclaredField("pid");
-            pidField.setAccessible(true);
-            pid = pidField.getInt(process);
-            pidField.setAccessible(false);
+        java.lang.Process process = processBuilder.start();
+        Field pidField = process.getClass().getDeclaredField("pid");
+        pidField.setAccessible(true);
+        pid = pidField.getInt(process);
+        pidField.setAccessible(false);
 
-            if (!debugCallbacks.isEmpty()) {
-                createDebugThread(process.getInputStream());
-                createDebugThread(process.getErrorStream());
-            }
-
-            if (terminationCallback != null) createWaitForThread(process, terminationCallback);
+        if (!debugCallbacks.isEmpty() || MainActivity.DEBUG_MODE) {
+            createDebugThread(process.getInputStream());
+            createDebugThread(process.getErrorStream());
         }
-        catch (Exception e) {}
-        return pid;
+
+        if (terminationCallback != null) createWaitForThread(process, terminationCallback);
+    }
+    catch (Exception e) {
+        if (MainActivity.DEBUG_MODE) {
+            System.err.println("[DIAG] ProcessHelper.exec 失败: command=" + command);
+            e.printStackTrace();
+        }
+    }
+    return pid;
     }
 
     private static void createDebugThread(final InputStream inputStream) {
